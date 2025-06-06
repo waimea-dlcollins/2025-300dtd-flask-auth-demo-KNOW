@@ -3,6 +3,7 @@
 #===========================================================
 
 from flask import Flask, render_template, request, flash, redirect
+from werkzeug.security import generate_password_hash, check_password_hash
 import html
 
 from app.helpers.session import init_session
@@ -10,7 +11,7 @@ from app.helpers.db import connect_db, handle_db_errors
 from app.helpers.errors import register_error_handlers, not_found_error
 
 
-# Create the app
+# Create the app                                    
 app = Flask(__name__)
 
 # Setup a session for messages, etc.
@@ -34,6 +35,13 @@ def index():
 @app.get("/about/")
 def about():
     return render_template("pages/about.jinja")
+
+#-----------------------------------------------------------
+# sign up page route
+#-----------------------------------------------------------
+@app.get("/signup/")
+def signup():
+    return render_template("pages/signup.jinja")
 
 
 #-----------------------------------------------------------
@@ -60,8 +68,18 @@ def show_all_things():
 def show_one_thing(id):
     with connect_db() as client:
         # Get the thing details from the DB
-        sql = "SELECT id, name, price FROM things WHERE id=?"
-        values = [id]
+        sql = """
+            SELECT things.id AS t_id,
+                thing.name AS t_name,
+                users.name AS u_name,
+                users.id AS u_id
+
+
+            FROM things
+            JOIN users ON things.users_id = users.id
+            
+             WHERE id=? """
+        values = [id]       
         result = client.execute(sql, values)
 
         # Did we get a result?
@@ -75,29 +93,42 @@ def show_one_thing(id):
             return not_found_error()
 
 
+
+
+
+
+
+
+
 #-----------------------------------------------------------
 # Route for adding a thing, using data posted from a form
 #-----------------------------------------------------------
-@app.post("/add")
+@app.post("/add-user")
 @handle_db_errors
 def add_a_thing():
     # Get the data from the form
     name  = request.form.get("name")
-    price = request.form.get("price")
+    username  = request.form.get("username")
+    password  = request.form.get("password")
+    
 
     # Sanitise the inputs
     name = html.escape(name)
-    price = html.escape(price)
+    username = html.escape(username)
+
+    #hash the password
+
+    hash = generate_password_hash(password)
 
     with connect_db() as client:
-        # Add the thing to the DB
-        sql = "INSERT INTO things (name, price) VALUES (?, ?)"
-        values = [name, price]
+        # Add the user to the DB
+        sql = "INSERT INTO things (name, username, password_hash) VALUES (?, ?, ?)"
+        values = [name, username, hash]
         client.execute(sql, values)
 
         # Go back to the home page
         flash(f"Thing '{name}' added", "success")
-        return redirect("/things")
+        return redirect("/")
 
 
 #-----------------------------------------------------------
