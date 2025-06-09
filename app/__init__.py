@@ -2,15 +2,14 @@
 # App Creation and Launch
 #===========================================================
 
-from flask import Flask, render_template, request, flash, redirect
+from flask import Flask, render_template, session, request, flash, redirect
 from werkzeug.security import generate_password_hash, check_password_hash
 import html
-
 from app.helpers.session import init_session
-from app.helpers.db import connect_db, handle_db_errors
+from app.helpers.db import connect_db
 from app.helpers.errors import register_error_handlers, not_found_error
 
-
+ 
 # Create the app                                    
 app = Flask(__name__)
 
@@ -43,12 +42,18 @@ def about():
 def signup():
     return render_template("pages/signup.jinja")
 
+#-----------------------------------------------------------
+# login page route
+#-----------------------------------------------------------
+@app.get("/login/")
+def login():
+    return render_template("pages/login.jinja")
+
 
 #-----------------------------------------------------------
 # Things page route - Show all the things, and new thing form
 #-----------------------------------------------------------
 @app.get("/things/")
-@handle_db_errors
 def show_all_things():
     with connect_db() as client:
         # Get all the things from the DB
@@ -64,7 +69,6 @@ def show_all_things():
 # Thing page route - Show details of a single thing
 #-----------------------------------------------------------
 @app.get("/thing/<int:id>")
-@handle_db_errors
 def show_one_thing(id):
     with connect_db() as client:
         # Get the thing details from the DB
@@ -104,8 +108,7 @@ def show_one_thing(id):
 # Route for adding a thing, using data posted from a form
 #-----------------------------------------------------------
 @app.post("/add-user")
-@handle_db_errors
-def add_a_thing():
+def add_user():
     # Get the data from the form
     name  = request.form.get("name")
     username  = request.form.get("username")
@@ -132,10 +135,49 @@ def add_a_thing():
 
 
 #-----------------------------------------------------------
+# Route for adding a login in a user, using data posted from a form
+#-----------------------------------------------------------
+@app.post("/login-user")
+def login_user():
+    # Get the data from the form
+    username  = request.form.get("username")
+    password  = request.form.get("password")
+    
+
+    # Sanitise the inputs
+
+    username = html.escape(username)
+
+
+
+    with connect_db() as client:
+        # try to find a matching record 
+        sql = "SELECT FROM users name, passord_hash"
+        values = [username]
+        result = client.execute(sql, values)
+            # check if we have a record 
+        if result.rows:
+            # yes so user exists 
+            user = result.rows[0]
+            hash = user[password_hash]
+
+            #check if passwords match 
+            if check_password_hash(hash, password):
+                # yes so save the details in the session
+                session[user_id] = user["id"]
+                session[user_name] = user["name"] 
+                flash("logged un successfully", "success")
+                return redirect("/")
+
+        # Go back to the home page
+        flash(" incorrect credentials", "error")
+        return redirect("/login")
+
+
+#-----------------------------------------------------------
 # Route for deleting a thing, Id given in the route
 #-----------------------------------------------------------
 @app.get("/delete/<int:id>")
-@handle_db_errors
 def delete_a_thing(id):
     with connect_db() as client:
         # Delete the thing from the DB
