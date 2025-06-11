@@ -2,15 +2,17 @@
 # App Creation and Launch
 #===========================================================
 
-from flask import Flask, render_template, session, request, flash, redirect
+from flask import Flask, render_template, request, flash, redirect, session
 from werkzeug.security import generate_password_hash, check_password_hash
 import html
+
 from app.helpers.session import init_session
 from app.helpers.db import connect_db
 from app.helpers.errors import register_error_handlers, not_found_error
+from app.helpers.auth import login_required
 
- 
-# Create the app                                    
+
+# Create the app
 app = Flask(__name__)
 
 # Setup a session for messages, etc.
@@ -35,18 +37,20 @@ def index():
 def about():
     return render_template("pages/about.jinja")
 
-#-----------------------------------------------------------
-# sign up page route
-#-----------------------------------------------------------
-@app.get("/signup/")
-def signup():
-    return render_template("pages/signup.jinja")
 
 #-----------------------------------------------------------
-# login page route
+# User registration form route
 #-----------------------------------------------------------
-@app.get("/login/")
-def login():
+@app.get("/register")
+def register_form():
+    return render_template("pages/register.jinja")
+
+
+#-----------------------------------------------------------
+# User login form route
+#-----------------------------------------------------------
+@app.get("/login")
+def login_form():
     return render_template("pages/login.jinja")
 
 
@@ -57,7 +61,16 @@ def login():
 def show_all_things():
     with connect_db() as client:
         # Get all the things from the DB
-        sql = "SELECT id, name FROM things ORDER BY name ASC"
+        sql = """
+            SELECT things.id,
+                   things.name,
+                   users.name AS owner
+
+            FROM things
+            JOIN users ON things.user_id = users.id
+
+            ORDER BY things.name ASC
+        """
         result = client.execute(sql)
         things = result.rows
 
@@ -71,19 +84,20 @@ def show_all_things():
 @app.get("/thing/<int:id>")
 def show_one_thing(id):
     with connect_db() as client:
-        # Get the thing details from the DB
+        # Get the thing details from the DB, including the owner info
         sql = """
-            SELECT things.id AS t_id,
-                thing.name AS t_name,
-                users.name AS u_name,
-                users.id AS u_id
-
+            SELECT things.id AS, t_id
+                   things.name AS,t_name
+                   things.price AS, t_price,
+                   things.user_id, AS, u_name
+                   users.name AS owner
 
             FROM things
-            JOIN users ON things.users_id = users.id
-            
-             WHERE id=? """
-        values = [id]       
+            JOIN users ON things.user_id = users.id
+
+            WHERE things.id=?
+        """
+        values = [id]
         result = client.execute(sql, values)
 
         # Did we get a result?
@@ -97,81 +111,30 @@ def show_one_thing(id):
             return not_found_error()
 
 
-
-
-
-
-
-
-
 #-----------------------------------------------------------
 # Route for adding a thing, using data posted from a form
+# - Restricted to logged in users
 #-----------------------------------------------------------
-@app.post("/add-user")
-def add_user():
+@app.post("/add")
+@login_required
+def add_a_thing():
     # Get the data from the form
     name  = request.form.get("name")
-    username  = request.form.get("username")
-    password  = request.form.get("password")
-    
+    price = request.form.get("price")
 
     # Sanitise the inputs
     name = html.escape(name)
-    username = html.escape(username)
-
-    #hash the password
-
-    hash = generate_password_hash(password)
+    price = html.escape(price)
 
     with connect_db() as client:
-        # Add the user to the DB
-        sql = "INSERT INTO things (name, username, password_hash) VALUES (?, ?, ?)"
-        values = [name, username, hash]
+        # Add the thing to the DB
+        sql = "INSERT INTO things (name, price, user_id) VALUES (?, ?, ?)"
+        values = [name, price, session["user_id"]]
         client.execute(sql, values)
 
         # Go back to the home page
         flash(f"Thing '{name}' added", "success")
-        return redirect("/")
-
-
-#-----------------------------------------------------------
-# Route for adding a login in a user, using data posted from a form
-#-----------------------------------------------------------
-@app.post("/login-user")
-def login_user():
-    # Get the data from the form
-    username  = request.form.get("username")
-    password  = request.form.get("password")
-    
-
-    # Sanitise the inputs
-
-    username = html.escape(username)
-
-
-
-    with connect_db() as client:
-        # try to find a matching record 
-        sql = "SELECT FROM users name, passord_hash"
-        values = [username]
-        result = client.execute(sql, values)
-            # check if we have a record 
-        if result.rows:
-            # yes so user exists 
-            user = result.rows[0]
-            hash = user[password_hash]
-
-            #check if passwords match 
-            if check_password_hash(hash, password):
-                # yes so save the details in the session
-                session[user_id] = user["id"]
-                session[user_name] = user["name"] 
-                flash("logged un successfully", "success")
-                return redirect("/")
-
-        # Go back to the home page
-        flash(" incorrect credentials", "error")
-        return redirect("/login")
+        return redirect("/things")
 
 
 #-----------------------------------------------------------
@@ -180,13 +143,105 @@ def login_user():
 @app.get("/delete/<int:id>")
 def delete_a_thing(id):
     with connect_db() as client:
-        # Delete the thing from the DB
-        sql = "DELETE FROM things WHERE id=?"
-        values = [id]
-        client.execute(sql, values)
+         # get our user id from the session 
+         user_id = session["user_id"]
+
+
+
+
+        # Delete the thing from the DB checking that we are the owner!
+    sql = "DELETE FROM things WHERE id=? AND user_id=?"
+    values = [id, user_id]
+    client.execute(sql, values)
 
         # Go back to the home page
-        flash("Thing deleted", "warning")
-        return redirect("/things")
+    flash("Thing deleted", "success")
+    return redirect("/things")
 
 
+#-----------------------------------------------------------
+# Route for adding a user when registration form submitted
+#-----------------------------------------------------------
+@app.post("/add-user")
+def add_user():
+    # Get the data from the form
+    name = request.form.get("name")
+    username = request.form.get("username")
+    password = request.form.get("password")
+
+    with connect_db() as client:
+        # Attempt to find an existing record for that user
+        sql = "SELECT * FROM users WHERE username = ?"
+        values = [username]
+        result = client.execute(sql, values)
+
+        # No existing record found, so safe to add the user
+        if not result.rows:
+            # Sanitise the name
+            name = html.escape(name)
+
+            # Salt and hash the password
+            hash = generate_password_hash(password)
+
+            # Add the user to the users table
+            sql = "INSERT INTO users (name, username, password_hash) VALUES (?, ?, ?)"
+            values = [name, username, hash]
+            client.execute(sql, values)
+
+            # And let them know it was successful and they can login
+            flash("Registration successful", "success")
+            return redirect("/login")
+
+        # Found an existing record, so prompt to try again
+        flash("Username already exists. Try again...", "error")
+        return redirect("/register")
+
+
+#-----------------------------------------------------------
+# Route for processing a user login
+#-----------------------------------------------------------
+@app.post("/login-user")
+def login_user():
+    # Get the login form data
+    username = request.form.get("username")
+    password = request.form.get("password")
+
+    with connect_db() as client:
+        # Attempt to find a record for that user
+        sql = "SELECT * FROM users WHERE username = ?"
+        values = [username]
+        result = client.execute(sql, values)
+
+        # Did we find a record?
+        if result.rows:
+            # Yes, so check password
+            user = result.rows[0]
+            hash = user["password_hash"]
+
+            # Hash matches?
+            if check_password_hash(hash, password):
+                # Yes, so save info in the session
+                session["user_id"] = user["id"]
+                session["user_name"] = user["name"]
+
+                # And head back to the home page
+                flash("Login successful", "success")
+                return redirect("/")
+
+        # Either username not found, or password was wrong
+        flash("Invalid credentials", "error")
+        return redirect("/login")
+
+
+#-----------------------------------------------------------
+# Route for processing a user logout
+#-----------------------------------------------------------
+@app.get("/logout")
+def logout():
+    # Clear the details from the session
+    session.pop("user_id", None)
+    session.pop("user_name", None)
+
+    # And head back to the home page
+    flash("Logged out successfully", "success")
+    return redirect("/")

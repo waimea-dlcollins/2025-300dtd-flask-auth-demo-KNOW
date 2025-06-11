@@ -36,15 +36,26 @@
                 <li><strong><a href="/">Flask App Demo</a></strong></li>
             </ul>
 
-{% if session.user_name  %}
+    {% if session.user_name  %}
     <p> Welcome,, {{sessions.user_name}} </p>
-    {% endif %}
+
             <ul>
                 <li><a href="/">Home</a></li>
                 <li><a href="/things">Things</a></li>
                 <li><a href="/about">About</a></li>
+
+                {% if session.user_id %}
+
+
+
+                 <li><a href="/logout">logoutp</a></li>
+
+                 {% else %}
+
                  <li><a href="/signup">sign-up</a></li>
                   <li><a href="/login">login</a></li>
+
+                {% endif %}
             </ul>
         </nav>
     </header>
